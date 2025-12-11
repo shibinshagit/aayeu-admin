@@ -1,0 +1,602 @@
+"use client";
+
+import React, { useEffect, useState, useCallback } from "react";
+import CustomBreadcrumb from "@/components/_ui/breadcrumb";
+import { Button } from "@/components/ui/button";
+import useAxios from "@/hooks/useAxios";
+import { Input } from "@/components/ui/input";
+import { showToast } from "@/components/_ui/toast-utils";
+import { debounce } from "lodash";
+import { Eye } from "lucide-react";
+import {
+  Table,
+  TableHeader,
+  TableBody,
+  TableRow,
+  TableHead,
+  TableCell,
+} from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
+import ROUTE_PATH from "@/libs/route-path";
+import { Skeleton } from "@/components/ui/skeleton";
+
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { generateProductSlug } from "@/utils/utilities";
+
+export default function InventoryPage() {
+  const router = useRouter();
+  const { request } = useAxios();
+  const [products, setProducts] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [searchValue, setSearchValue] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [keyRefresh, setKeyRefresh] = useState(0);
+  const [categories, setCategories] = useState([]);
+  const [localMin, setLocalMin] = useState("");
+  const [localMax, setLocalMax] = useState("");
+  const [brands, setBrands] = useState([]);
+  const [loadingBrands, setLoadingBrands] = useState(false);
+  const [brandSearch, setBrandSearch] = useState("");
+
+  const [state, setState] = useState({
+    searchValue: "",
+    searchQuery: "",
+
+    currentPage: 1,
+    totalPages: 1,
+    keyRefresh: 0,
+    localminprice: "",
+    localmaxprice: "", // 👈 added filters
+    filters: {
+      gender: "",
+      category: "",
+      brand: "",
+      minPrice: "",
+      maxPrice: "",
+      vendorId: "",
+    },
+  });
+
+  // Vendors dropdown state
+  const [vendors, setVendors] = useState([]);
+  const [loadingVendors, setLoadingVendors] = useState(false);
+
+  // 🏷️ Fetch Products
+  const fetchProducts = async () => {
+    setLoading(true);
+    try {
+      let endpoint = `/admin/get-products?page=${currentPage}`;
+
+      // Search
+      if (searchQuery) endpoint += `&q=${searchQuery}`;
+
+      // Filters
+      const { gender, category, brand, minPrice, maxPrice, vendorId } =
+        state.filters;
+
+      if (gender && gender !== "all") endpoint += `&gender=${gender}`;
+      if (category && category !== "all") endpoint += `&category=${category}`;
+      if (brand && brand !== "all") endpoint += `&brand=${brand}`;
+      if (minPrice) endpoint += `&min_price=${Number(minPrice)}`;
+      if (maxPrice) endpoint += `&max_price=${Number(maxPrice)}`;
+      if (vendorId && vendorId !== "all") endpoint += `&vendor_id=${vendorId}`;
+
+      const { data, error } = await request({
+        method: "GET",
+        url: endpoint,
+        authRequired: true,
+      });
+
+      if (error) throw new Error(error?.message || error);
+      setProducts(data?.data?.products || []);
+
+      const allCategories =
+        data?.data?.products?.flatMap((p) => p.categories) || [];
+      setCategories(allCategories);
+
+      const uniqueCategories = Array.from(
+        new Map(allCategories.map((cat) => [cat.id, cat])).values()
+      );
+      setCategories(uniqueCategories);
+
+      setTotalPages(data?.data?.total_pages || 1);
+    } catch (err) {
+      console.error("Error fetching products:", err);
+      showToast("error", err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 🔄 Refresh
+  const handleRefresh = () => setKeyRefresh((prev) => prev + 1);
+
+  // 🔍 Debounced Search
+  const debounceSearch = useCallback(
+    debounce((val) => {
+      setSearchQuery(val);
+      setCurrentPage(1);
+    }, 500),
+    []
+  );
+
+  const handleSearchChange = (e) => {
+    const val = e.target.value;
+    setSearchValue(val);
+    debounceSearch(val);
+  };
+
+  const handleClearFilters = () => {
+    setState((prev) => ({
+      ...prev,
+      filters: {
+        gender: "all",
+        category: "all",
+        brand: "all",
+        minPrice: "",
+        maxPrice: "",
+      },
+      currentPage: 1,
+    }));
+  };
+
+  // Debounced state update for API / filters
+  const debounceMinPrice = useCallback(
+    debounce((val) => {
+      setState((prev) => ({
+        ...prev,
+        filters: { ...prev.filters, minPrice: val },
+        currentPage: 1,
+      }));
+    }, 500),
+    []
+  );
+
+  const debounceMaxPrice = useCallback(
+    debounce((val) => {
+      setState((prev) => ({
+        ...prev,
+        filters: { ...prev.filters, maxPrice: val },
+        currentPage: 1,
+      }));
+    }, 500),
+    []
+  );
+
+  useEffect(() => {
+    fetchProducts();
+  }, [currentPage, keyRefresh, searchQuery, state.filters]);
+
+  // Fetch Vendors for dropdown
+  useEffect(() => {
+    const fetchVendors = async () => {
+      setLoadingVendors(true);
+      try {
+        const { data, error } = await request({
+          method: "GET",
+          url: "/admin/get-vendor-list",
+          authRequired: true,
+        });
+        if (error) throw new Error(error?.message || error);
+        const list = data?.data?.vendors || [];
+        const allowed = new Set([
+          "a6bdd96b-0e2c-4f3e-b644-4e088b1778e0",
+          "b34fd0f6-815a-469e-b7c2-73f9e8afb3ed",
+          "65053474-4e40-44ee-941c-ef5253ea9fc9",
+        ]);
+        const onlyTwo = list.filter((v) => allowed.has(v.id));
+        setVendors(onlyTwo);
+      } catch (err) {
+        showToast("error", err.message || "Failed to load vendors");
+      } finally {
+        setLoadingVendors(false);
+      }
+    };
+    fetchVendors();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Fetch all brands
+  useEffect(() => {
+    const fetchBrands = async () => {
+      setLoadingBrands(true);
+      try {
+        const { data, error } = await request({
+          method: "GET",
+          url: "/admin/get-all-brands",
+          authRequired: true,
+        });
+
+        if (error) throw new Error(error?.message || error);
+
+        console.log(data.data);
+
+        setBrands(data?.data || []); // expected array
+      } catch (err) {
+        showToast("error", err.message || "Failed to load brands");
+      } finally {
+        setLoadingBrands(false);
+      }
+    };
+
+    fetchBrands();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const filteredBrands = brands.filter((b) =>
+    b.brand_name.toLowerCase().includes(brandSearch.toLowerCase())
+  );
+
+  return (
+    <div className="p-6">
+      <CustomBreadcrumb />
+
+      {/* Header */}
+      {/* Header + Buttons */}
+      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center mb-4 gap-4">
+        {/* Title */}
+        <h1 className="text-2xl sm:text-3xl font-bold w-full lg:w-auto">
+          Inventory
+        </h1>
+
+        {/* Buttons & Search */}
+        <div className="flex flex-col sm:flex-row lg:flex-row flex-wrap sm:items-center gap-2 w-full lg:w-auto">
+          <Input
+            type="text"
+            value={searchValue}
+            placeholder="Search products..."
+            className="w-full sm:w-[250px] lg:w-[250px]"
+            onChange={handleSearchChange}
+          />
+
+          <Button
+            variant="default"
+            className="w-full sm:w-auto lg:w-auto "
+            onClick={() =>
+              router.push(ROUTE_PATH.DASHBOARD.CATEGORY_MANAGEMENT)
+            }
+          >
+            Category Management
+          </Button>
+
+          <Button
+            variant="default"
+            className="w-full sm:w-auto lg:w-auto"
+            onClick={handleRefresh}
+          >
+            Refresh
+          </Button>
+
+          {/* <Button
+            variant="default"
+            className="w-full sm:w-auto lg:w-auto"
+            onClick={() => router.push(ROUTE_PATH.DASHBOARD.ADD_PRODUCT)}
+          >
+            Add Single Product
+          </Button> */}
+        </div>
+      </div>
+
+      {/* Filters */}
+      <div className="flex flex-col sm:flex-row lg:flex-row flex-wrap gap-2 mb-4 items-start sm:items-center">
+        {/* Gender Filter */}
+        <Select
+          value={state.filters.gender}
+          onValueChange={(value) =>
+            setState((prev) => ({
+              ...prev,
+              filters: { ...prev.filters, gender: value },
+              currentPage: 1,
+            }))
+          }
+        >
+          <SelectTrigger className="w-full sm:w-[150px] md:w-[130px] lg:w-[150px]">
+            <SelectValue placeholder="All Genders" />
+          </SelectTrigger>
+          <SelectContent className="max-h-60 overflow-y-auto">
+            <SelectItem value="all">All Genders</SelectItem>
+            {[...new Set(products.map((p) => p.gender))].map((gender) => (
+              <SelectItem key={gender} value={gender}>
+                {gender}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        {/* Category Filter */}
+        <Select
+          value={state.filters.category}
+          onValueChange={(value) =>
+            setState((prev) => ({
+              ...prev,
+              filters: { ...prev.filters, category: value },
+              currentPage: 1,
+            }))
+          }
+        >
+          <SelectTrigger className="w-full sm:w-[180px] md:w-[130px] lg:w-[180px]">
+            <SelectValue placeholder="All Categories" />
+          </SelectTrigger>
+          <SelectContent className="max-h-60 lg:max-w-46 overflow-y-auto">
+            <SelectItem value="all">All Categories</SelectItem>
+            {categories.map((cat) => (
+              <SelectItem key={cat.id} value={cat.name}>
+                {cat.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        {/* Brand Filter */}
+        <Select
+          value={state.filters.brand}
+          onValueChange={(value) =>
+            setState((prev) => ({
+              ...prev,
+              filters: { ...prev.filters, brand: value },
+              currentPage: 1,
+            }))
+          }
+        >
+          <SelectTrigger className="w-full sm:w-[180px] md:w-[130px] lg:w-[180px]">
+            <SelectValue
+              placeholder={loadingBrands ? "Loading brands..." : "All Brands"}
+            />
+          </SelectTrigger>
+
+          <SelectContent className="p-0">
+            {/* 🔍 FIXED SEARCH BAR */}
+            <div className="sticky top-0 z-20 bg-white p-2 border-b shadow-sm">
+              <Input
+                placeholder="Search brand..."
+                value={brandSearch}
+                onChange={(e) => setBrandSearch(e.target.value)}
+                className="h-8 text-sm"
+              />
+            </div>
+
+            {/* SCROLLABLE LIST ONLY */}
+            <div className="max-h-60 overflow-y-auto">
+              <SelectItem value="all">All Brands</SelectItem>
+
+              {filteredBrands.length === 0 ? (
+                <div className="p-2 text-sm text-gray-500">No brands found</div>
+              ) : (
+                filteredBrands.map((item) => {
+                  const key = item?.id ?? item?.brand_name;
+                  return (
+                    <SelectItem key={key} value={item.brand_name}>
+                      {item.brand_name}
+                    </SelectItem>
+                  );
+                })
+              )}
+            </div>
+          </SelectContent>
+        </Select>
+
+        <div>
+          <Input
+            type="text"
+            placeholder="Min Price"
+            className="w-full sm:w-[150px] md:w-[130px] lg:w-[180px] mr-2"
+            value={localMin}
+            onChange={(e) => {
+              const val = e.target.value;
+              if (/^\d*$/.test(val)) {
+                setLocalMin(val);
+                debounceMinPrice(val);
+              }
+            }}
+          />
+
+          <Input
+            type="text"
+            placeholder="Max Price"
+            className="w-full sm:w-[150px] md:w-[130px] lg:w-[180px] mr-2"
+            value={localMax}
+            onChange={(e) => {
+              const val = e.target.value;
+              if (/^\d*$/.test(val)) {
+                setLocalMax(val); // input me turant update
+                debounceMaxPrice(val); // filters update aur API call debounce ke through
+              }
+            }}
+          />
+        </div>
+        <Button
+          variant="default"
+          className="w-full sm:w-auto lg:w-auto"
+          onClick={handleClearFilters}
+        >
+          Clear Filters
+        </Button>
+
+        {/* Vendor Dropdown (right of Clear Filters) */}
+        <Select
+          value={state.filters.vendorId}
+          onValueChange={(value) =>
+            setState((prev) => ({
+              ...prev,
+              filters: { ...prev.filters, vendorId: value },
+              currentPage: 1,
+            }))
+          }
+        >
+          <SelectTrigger className="w-full sm:w-[200px] md:w-[180px] lg:w-[220px]">
+            <SelectValue
+              placeholder={
+                loadingVendors ? "Loading vendors..." : "Select Vendor"
+              }
+            />
+          </SelectTrigger>
+          <SelectContent className="max-h-60 overflow-y-auto">
+            <SelectItem value="all">All Vendors</SelectItem>
+            {vendors.map((v) => (
+              <SelectItem key={v.id} value={v.id}>
+                {v.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      {/* Table */}
+      <div className="overflow-x-auto w-full border mt-6 border-gray-200 rounded-md">
+        <div className="min-w-[900px]">
+          <Table className="table-auto w-full">
+            {/* HEADER — shown only once */}
+            <TableHeader className="bg-gray-200">
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>Category</TableHead>
+                <TableHead>Brand</TableHead>
+                <TableHead>Gender</TableHead>
+                <TableHead>Our Price</TableHead>
+                <TableHead>Stock</TableHead>
+                <TableHead className="text-center">Status</TableHead>
+                <TableHead className="text-center">Action</TableHead>
+              </TableRow>
+            </TableHeader>
+
+            <TableBody>
+              {/* -------------- SHOW SKELETON WHILE LOADING -------------- */}
+              {loading &&
+                Array.from({ length: 8 }).map((_, idx) => (
+                  <TableRow key={idx}>
+                    <TableCell>
+                      <div className="space-y-2">
+                        <Skeleton className="h-4 w-44" />
+                        <Skeleton className="h-3 w-28" />
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <Skeleton className="h-4 w-32" />
+                    </TableCell>
+                    <TableCell>
+                      <Skeleton className="h-4 w-32" />
+                    </TableCell>
+                    <TableCell>
+                      <Skeleton className="h-4 w-24" />
+                    </TableCell>
+                    <TableCell className="text-center">
+                      <Skeleton className="mx-auto h-4 w-16" />
+                    </TableCell>
+                    <TableCell className="text-center">
+                      <Skeleton className="mx-auto h-4 w-12" />
+                    </TableCell>
+                    <TableCell className="text-center">
+                      <Skeleton className="mx-auto h-6 w-16 rounded-md" />
+                    </TableCell>
+                    <TableCell className="text-center">
+                      <Skeleton className="mx-auto h-8 w-8 rounded-md" />
+                    </TableCell>
+                  </TableRow>
+                ))}
+
+              {/* -------------- SHOW PRODUCTS AFTER LOADING -------------- */}
+              {!loading &&
+                products.map((product) => {
+                  const categoryNames =
+                    product.categories?.map((cat) => cat.name).join(", ") ||
+                    "-";
+                  const variant = product.variants?.[0] || {};
+
+                  return (
+                    <TableRow key={product.id}>
+                      <TableCell>
+                        <Link
+                          href={`https://www.aayeu.com/shop/product/${generateProductSlug(
+                            product.name
+                          )}/${product.id}?cat=${generateProductSlug(
+                            product.categories?.[0]?.name
+                          )}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-block"
+                        >
+                          <div className="font-medium hover:text-amber-600 transition">
+                            {product.name}
+                          </div>
+                        </Link>
+                        <div className="text-xs text-gray-600">
+                          SKU: {product.product_sku || "-"}
+                        </div>
+                      </TableCell>
+
+                      <TableCell>{categoryNames}</TableCell>
+                      <TableCell>{product.brand_name || "-"}</TableCell>
+                      <TableCell>{product.gender || "-"}</TableCell>
+
+                      <TableCell className="text-center">
+                        {variant.sale_price || "-"}
+                      </TableCell>
+
+                      <TableCell className="text-center">
+                        {variant.stock || "-"}
+                      </TableCell>
+
+                      <TableCell className="text-center">
+                        <Badge
+                          variant={
+                            product.is_active ? "success" : "destructive"
+                          }
+                          className="mx-auto px-3 py-1"
+                        >
+                          {product.is_active ? "Active" : "Inactive"}
+                        </Badge>
+                      </TableCell>
+
+                      <TableCell className="text-center">
+                        <Link
+                          href={`/dashboard/inventories/viewproduct?id=${product.id}`}
+                          target="_blank"
+                        >
+                          <Eye className="w-4 h-4" />
+                        </Link>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+            </TableBody>
+          </Table>
+        </div>
+      </div>
+
+      {/* Pagination */}
+      {totalPages >= 0 && (
+        <div className="flex justify-center gap-2 mt-4">
+          <Button
+            className="cursor-pointer"
+            variant="outline"
+            disabled={currentPage === 1}
+            onClick={() => setCurrentPage((p) => p - 1)}
+          >
+            Prev
+          </Button>
+          <span className="px-3 py-2">
+            Page {currentPage} of {totalPages}
+          </span>
+          <Button
+            className="cursor-pointer"
+            variant="outline"
+            disabled={currentPage === totalPages}
+            onClick={() => setCurrentPage((p) => p + 1)}
+          >
+            Next
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}

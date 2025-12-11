@@ -1,0 +1,655 @@
+"use client";
+
+import React, { useEffect, useState, useRef } from "react";
+import { useSearchParams } from "next/navigation";
+import useAxios from "@/hooks/useAxios";
+import { showToast } from "@/components/_ui/toast-utils"; // shadcn toast
+import { Spinner } from "@/components/_ui/spinner"; // shadcn spinner
+import Image from "next/image";
+import { Card, CardContent } from "@/components/ui/card";
+import CustomBreadcrumb from "@/components/_ui/breadcrumb";
+import { Switch } from "@/components/ui/switch";
+import { PencilIcon, PencilOffIcon, X, RefreshCw, ChevronRight, Check } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import MapProductCategoryDialog from "@/components/_dialogs/MapProductCategoryDialog";
+// import UpdateProductModal from "@/components/_dialogs/UpdateProduct";
+
+
+
+const ViewProduct = () => {
+
+  const fetchedRef = useRef(false);
+  const searchParams = useSearchParams();
+  const productId = searchParams.get("id");
+
+  const { request } = useAxios();
+  const [product, setProduct] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [toggleLoading, setToggleLoading] = useState({});
+  const [isMappingDialogOpen, setIsMappingDialogOpen] = useState(false);
+  const [statusLoading, setStatusLoading] = useState(false);
+  const [unmapLoading, setUnmapLoading] = useState({});
+  const [editingPrice, setEditingPrice] = useState({});
+  const [priceValues, setPriceValues] = useState({});
+  const [priceLoading, setPriceLoading] = useState({});
+
+
+  const fetchProduct = async () => {
+    try {
+      const { data, error } = await request({
+        method: "GET",
+        url: `/admin/get-product-by-id?productId=${productId}`,
+        authRequired: true,
+      });
+      if (error) throw new Error(error?.message || error);
+
+      if (data?.success) {
+        setProduct(data.data);
+        // showToast("success", data.message);
+      }
+    } catch (err) {
+      console.error("API Error:", err);
+      showToast("error", err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleToggleProductStatus = async () => {
+    if (!productId) return;
+    setStatusLoading(true);
+    try {
+      const { data, error } = await request({
+        method: "PUT",
+        url: "/admin/disable-product",
+        payload: {
+          productId,
+        },
+        authRequired: true,
+      });
+
+      if (error) throw new Error(error?.message || error);
+
+      showToast(
+        "success",
+        data?.message ||
+        (product?.is_active ? "Product disabled successfully" : "Product enabled successfully")
+      );
+
+      setProduct((prev) =>
+        prev
+          ? {
+            ...prev,
+            is_active: !prev.is_active,
+          }
+          : prev
+      );
+    } catch (err) {
+      console.error("Error updating product status:", err);
+      showToast("error", err.message || "Failed to update product status");
+    } finally {
+      setStatusLoading(false);
+    }
+  };
+
+  // Toggle product flags (is_newest/is_our_picks)
+  const toggleProductFlag = async (field, currentValue) => {
+    const key = `${productId}_${field}`;
+    setToggleLoading(prev => ({ ...prev, [key]: true }));
+    try {
+      const { data, error } = await request({
+        method: "POST",
+        url: "/admin/manage-op-newest-products",
+        payload: {
+          product_id: productId,
+          field,
+        },
+        authRequired: true,
+      });
+
+      if (error) {
+        showToast("error", error || data?.message || "Failed to update");
+      } else {
+        showToast("success", data?.message || "Updated successfully");
+        // Update local state to reflect changed flag
+        setProduct(prev => ({
+          ...prev,
+          [field]: !currentValue
+        }));
+      }
+    } catch (err) {
+      console.error(err);
+      showToast("error", err.message || "Failed to update");
+    } finally {
+      setToggleLoading(prev => ({ ...prev, [key]: false }));
+    }
+  };
+
+  // Unmap product from category
+  const handleUnmapProduct = async (categoryId) => {
+    if (!product?.id || !categoryId) return;
+
+    setUnmapLoading(prev => ({ ...prev, [categoryId]: true }));
+    try {
+      const { data, error } = await request({
+        method: "DELETE",
+        url: "/admin/unmap-product-from-category",
+        params: {
+          product_id: product.id,
+          our_category_id: categoryId,
+        },
+        authRequired: true,
+      });
+
+      if (error) throw new Error(error?.message || error);
+
+      showToast(
+        "success",
+        data?.message || "Product unmapped from category successfully"
+      );
+
+      // Refresh product data to remove mapped_category
+      await fetchProduct();
+    } catch (err) {
+      console.error("Error unmapping product:", err);
+      showToast("error", err.message || "Failed to unmap product");
+    } finally {
+      setUnmapLoading(prev => ({ ...prev, [categoryId]: false }));
+    }
+  };
+
+  const handleRefresh = () => {
+    fetchProduct();
+  };
+
+  // Handle price update
+  const handlePriceUpdate = async (variantId, type, newPrice) => {
+    if (!product?.id || !variantId) return;
+
+    const key = `${variantId}_${type}`;
+    setPriceLoading(prev => ({ ...prev, [key]: true }));
+
+    try {
+      const { data, error } = await request({
+        method: "PATCH",
+        url: "/admin/update-product-price",
+        payload: {
+          type: type === "mrp" ? "mrp" : "sale_price",
+          price: parseFloat(newPrice),
+          product_id: product.id,
+          varient_id: variantId,
+        },
+        authRequired: true,
+      });
+
+      if (error) throw new Error(error?.message || error);
+
+      showToast("success", data?.message || "Price updated successfully");
+
+      // Refresh product data
+      await fetchProduct();
+      
+      // Exit edit mode
+      setEditingPrice(prev => {
+        const newState = { ...prev };
+        delete newState[key];
+        return newState;
+      });
+    } catch (err) {
+      console.error("Error updating price:", err);
+      showToast("error", err.message || "Failed to update price");
+    } finally {
+      setPriceLoading(prev => {
+        const newState = { ...prev };
+        delete newState[key];
+        return newState;
+      });
+    }
+  };
+
+  // Handle price input change
+  const handlePriceChange = (variantId, type, value) => {
+    const key = `${variantId}_${type}`;
+    setPriceValues(prev => ({
+      ...prev,
+      [key]: value,
+    }));
+  };
+
+  // Start editing price
+  const startEditingPrice = (variantId, type, currentValue) => {
+    const key = `${variantId}_${type}`;
+    setEditingPrice(prev => ({ ...prev, [key]: true }));
+    setPriceValues(prev => ({
+      ...prev,
+      [key]: currentValue,
+    }));
+  };
+
+  // Cancel editing
+  const cancelEditingPrice = (variantId, type) => {
+    const key = `${variantId}_${type}`;
+    setEditingPrice(prev => {
+      const newState = { ...prev };
+      delete newState[key];
+      return newState;
+    });
+    setPriceValues(prev => {
+      const newState = { ...prev };
+      delete newState[key];
+      return newState;
+    });
+  };
+
+  useEffect(() => {
+    if (!productId || fetchedRef.current) return;
+    fetchedRef.current = true;
+    fetchProduct();
+  }, [productId]);
+
+  if (loading) {
+    return (
+      <div className="flex justify-center items-center h-[70vh]">
+        <Spinner className="w-12 h-12 text-yellow-600" />
+      </div>
+    );
+  }
+
+  if (!product) {
+    return <div className="text-center text-red-600 mt-10">Product not found</div>;
+  }
+
+  return (
+    <div className="p-4">
+      <CustomBreadcrumb />
+      <div className="mt-4">
+        <Card className="shadow-lg border border-yellow-600">
+          <CardContent className="space-y-4">
+            <div className="flex justify-between items-center">
+              <div>
+                <div className="flex justify-between items-center">
+                  <h1 className="text-3xl font-bold text-black">{product.name}</h1>
+                </div>              
+                  </div>
+              <div>
+                <div className="flex flex-col items-end gap-2 sm:flex-row sm:items-center sm:gap-4">
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      className="cursor-pointer "
+                      checked={!!product?.is_active}
+                      disabled={statusLoading}
+                      onCheckedChange={handleToggleProductStatus}
+                    />
+                    <span className="text-sm font-medium">
+                      {product?.is_active ? "Status: Enabled" : "Status: Disabled"}
+                    </span>
+                  </div>
+                  <Button
+                    className="rounded-md"
+                    //  variant="outline"
+                    size="lg"
+                    onClick={() => setIsMappingDialogOpen(true)}>
+                    Category Mapping
+                  </Button>
+                  <Button
+                    className="rounded-md"
+                    size="lg"
+                    onClick={handleRefresh}
+                    variant="outline"
+                  >
+                    <RefreshCw className="w-4 h-4 mr-2" />
+                    Refresh
+                  </Button>
+                  {/* <UpdateProductModal product={product} onSuccess={fetchProduct} />  */}
+                </div>
+              </div>
+            </div>
+            <p className="text-gray-600">{product.title}</p>
+
+            <div className="flex flex-wrap gap-4">
+              <p className="text-black"><strong>Category:</strong> {product.categories?.[0]?.name || "N/A"}</p>
+              <p className="text-black"><strong>Brand:</strong> {product.brand_name || "N/A"}</p>
+              <p className="text-black"><strong>Min Price:</strong> AED{product.min_price || "N/A"}</p>
+              <p className="text-black"><strong>Max Price:</strong> AED{product.max_price || "N/A"}</p>
+              <p className="text-black"><strong>Stock (first variant):</strong> {product.variants?.[0]?.stock || "N/A"}</p>
+              <p className="text-black"><strong>Country:</strong> {product.country_of_origin || "N/A"}</p>
+            </div>
+
+            <div className="mt-3 flex items-center gap-4">
+              <div className="flex items-center gap-2">
+                <Switch
+                  className="cursor-pointer data-[state=checked]:bg-yellow-500 data-[state=checked]:hover:bg-yellow-500/90"
+                  checked={!!product?.is_newest}
+                  disabled={!!toggleLoading[`${productId}_is_newest`]}
+                  onCheckedChange={async () => {
+                    await toggleProductFlag("is_newest", !!product?.is_newest);
+                  }}
+                />
+                <span className="text-sm">Newest product</span>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Switch
+                  className="cursor-pointer"
+                  checked={!!product?.is_our_picks}
+                  disabled={!!toggleLoading[`${productId}_is_our_picks`]}
+                  onCheckedChange={async () => {
+                    await toggleProductFlag("is_our_picks", !!product?.is_our_picks);
+                  }}
+                />
+                <span className="text-sm">Our Picks</span>
+              </div>
+            </div>
+
+            {(() => {
+              // Support both mapped_categories (array) and mapped_category (single object) for backward compatibility
+              const categories = product?.mapped_categories 
+                ? product.mapped_categories 
+                : product?.mapped_category 
+                  ? [product.mapped_category] 
+                  : [];
+              
+              if (categories.length === 0) return null;
+              
+              return (
+                <div className="mt-3">
+                  <h2 className="font-semibold text-black mb-2">
+                    {categories.length > 1 ? "Mapped Categories:" : "Mapped Category:"}
+                  </h2>
+                  <div className="flex flex-wrap gap-3">
+                    {categories.map((category) => (
+                      <div
+                        key={category.id}
+                        className="inline-flex items-center gap-3 px-4 py-3 bg-gradient-to-r from-yellow-50 to-yellow-100 border-2 border-yellow-400 rounded-lg shadow-md hover:shadow-lg transition-all"
+                      >
+                        <div className="flex flex-col gap-1.5">
+                          <span className="font-semibold text-yellow-900 text-base">{category.name}</span>
+                          <div className="flex items-center gap-1.5 text-xs text-yellow-800">
+                            <span className="font-medium opacity-75">Path:</span>
+                            {category.path ? (
+                              <span className="flex items-center gap-1">
+                                {category.path.split('/').map((segment, idx, arr) => (
+                                  <span key={idx} className="flex items-center">
+                                    <span className="text-yellow-700 font-medium capitalize">{segment}</span>
+                                    {idx < arr.length - 1 && (
+                                      <ChevronRight className="h-3 w-3 mx-1 text-yellow-600" />
+                                    )}
+                                  </span>
+                                ))}
+                              </span>
+                            ) : (
+                              <span className="text-yellow-600 italic">N/A</span>
+                            )}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleUnmapProduct(category.id)}
+                          disabled={unmapLoading[category.id]}
+                          className="ml-1 p-1.5 rounded-full hover:bg-yellow-200 active:bg-yellow-300 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer group flex-shrink-0"
+                          aria-label="Unmap category"
+                          title="Remove category mapping"
+                        >
+                          <X className="h-4 w-4 text-yellow-700 group-hover:text-yellow-900 transition-colors" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+
+            <div>
+              <h2 className="font-semibold text-black mb-1">Description:</h2>
+              <div
+                className="text-gray-700"
+                dangerouslySetInnerHTML={{ __html: product.description }}
+              />
+              <p className="text-gray-500">{product.short_description}</p>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4 mt-4">
+              {product.product_img && (
+                <div className="relative w-full h-40">
+                  <Image
+                    width={100}
+                    height={100}
+                    src={product.product_img}
+                    alt={product.name}
+                    className="object-cover rounded-md shadow-md"
+                  />
+                </div>
+              )}
+              {product.variants?.[0]?.images?.map((img, idx) => (
+                <div key={idx} className="relative w-full h-40">
+                  <Image
+                    width={100}
+                    height={100}
+                    src={img}
+                    alt={`${product.name} variant`}
+                    className="object-cover rounded-md shadow-md"
+                  />
+                </div>
+              ))}
+            </div>
+
+            {product.variants?.length > 0 && (
+              <div className="mt-6 overflow-x-auto">
+                <h2 className="font-semibold mb-2 text-black">Variants:</h2>
+                <table className="w-full border-3 border-gray-300 text-left">
+                  <thead className="bg-yellow-600 text-white">
+                    <tr>
+                      <th rowSpan={2} className="px-3 py-2 border">SKU</th>
+                      <th colSpan={2} className="px-3 py-2 border">Aayeu Price</th>
+                      <th colSpan={2} className="px-3 py-2 border">Vendor Price</th>
+                      <th rowSpan={2} className="px-3 py-2 border">Price Difference %</th>
+                      <th colSpan={3} className="px-3 py-2 border">Variants</th>
+                    </tr>
+                    <tr>
+                      <th className="px-3 py-2 border">Our MRP</th>
+                      <th className="px-3 py-2 border">Our Sale Price</th>
+                      <th className="px-3 py-2 border">Vendor MRP</th>
+                      <th className="px-3 py-2 border">Vendor Sale Price</th>
+                      <th className="px-3 py-2 border">Variant Color</th>
+                      <th className="px-3 py-2 border">Variant Size</th>
+                      <th className="px-3 py-2 border">Stock</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {product.variants.map((v) => {
+                      const ourSalePrice = parseFloat(v.sale_price) || 0;
+                      const vendorSalePrice = parseFloat(v.vendor_sale_price) || 0;
+                      const difference = ourSalePrice - vendorSalePrice;
+                      const percentageDiff = vendorSalePrice > 0 
+                        ? ((difference / vendorSalePrice) * 100).toFixed(2)
+                        : "0.00";
+                      
+                      const mrpKey = `${v.id}_mrp`;
+                      const salePriceKey = `${v.id}_sale_price`;
+                      const isEditingMrp = editingPrice[mrpKey];
+                      const isEditingSalePrice = editingPrice[salePriceKey];
+                      const mrpLoading = priceLoading[mrpKey];
+                      const salePriceLoading = priceLoading[salePriceKey];
+                      
+                      return (
+                        <tr key={v.id} className="even:bg-gray-50">
+                          <td className="px-3 py-2 border">{v.sku || "N/A"}</td>
+                          
+                          {/* Our MRP - Editable */}
+                          <td className="px-3 py-2 border">
+                            {isEditingMrp ? (
+                              <div className="flex items-center gap-1">
+                                <Input
+                                  type="number"
+                                  step="0.01"
+                                  value={priceValues[mrpKey] !== undefined ? priceValues[mrpKey] : v.mrp}
+                                  onChange={(e) => handlePriceChange(v.id, "mrp", e.target.value)}
+                                  className="w-20 h-8 text-sm"
+                                  disabled={mrpLoading}
+                                  onFocus={(e) => {
+                                    setTimeout(() => {
+                                      e.target.select();
+                                    }, 0);
+                                  }}
+                                  onClick={(e) => {
+                                    e.target.select();
+                                  }}
+                                  onWheel={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    e.target.blur();
+                                  }}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") {
+                                      const value = priceValues[mrpKey] !== undefined ? priceValues[mrpKey] : v.mrp;
+                                      if (value && value !== "") {
+                                        handlePriceUpdate(v.id, "mrp", value);
+                                      }
+                                    } else if (e.key === "Escape") {
+                                      cancelEditingPrice(v.id, "mrp");
+                                    }
+                                  }}
+                                  autoFocus
+                                />
+                                <button
+                                  onClick={() => {
+                                    const value = priceValues[mrpKey] !== undefined ? priceValues[mrpKey] : v.mrp;
+                                    if (value && value !== "") {
+                                      handlePriceUpdate(v.id, "mrp", value);
+                                    }
+                                  }}
+                                  disabled={mrpLoading || !priceValues[mrpKey] || priceValues[mrpKey] === ""}
+                                  className="p-1 text-green-600 hover:text-green-700 disabled:opacity-50"
+                                  title="Save"
+                                >
+                                  <Check className="h-4 w-4 cursor-pointer" />
+                                </button>
+                                <button
+                                  onClick={() => cancelEditingPrice(v.id, "mrp")}
+                                  disabled={mrpLoading}
+                                  className="p-1 text-red-600 hover:text-red-700 disabled:opacity-50"
+                                  title="Cancel"
+                                >
+                                  <X className="h-4 w-4 cursor-pointer" />
+                                </button>
+                              </div>
+                            ) : (
+                              <div 
+                                className="flex items-center gap-1 cursor-pointer hover:bg-gray-100 rounded px-1 py-0.5 group"
+                                onClick={() => startEditingPrice(v.id, "mrp", v.mrp)}
+                                title="Click to edit"
+                              >
+                                <span>AED{v.mrp}</span>
+                                <PencilIcon className="h-3 w-3 text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+                              </div>
+                            )}
+                          </td>
+                          
+                          {/* Our Sale Price - Editable */}
+                          <td className="px-3 py-2 border">
+                            {isEditingSalePrice ? (
+                              <div className="flex items-center gap-1">
+                                <Input
+                                  type="number"
+                                  step="0.01"
+                                  value={priceValues[salePriceKey] !== undefined ? priceValues[salePriceKey] : v.sale_price}
+                                  onChange={(e) => handlePriceChange(v.id, "sale_price", e.target.value)}
+                                  className="w-20 h-8 text-sm"
+                                  disabled={salePriceLoading}
+                                  onFocus={(e) => {
+                                    setTimeout(() => {
+                                      e.target.select();
+                                    }, 0);
+                                  }}
+                                  onClick={(e) => {
+                                    e.target.select();
+                                  }}
+                                  onWheel={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    e.target.blur();
+                                  }}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") {
+                                      const value = priceValues[salePriceKey] !== undefined ? priceValues[salePriceKey] : v.sale_price;
+                                      if (value && value !== "") {
+                                        handlePriceUpdate(v.id, "sale_price", value);
+                                      }
+                                    } else if (e.key === "Escape") {
+                                      cancelEditingPrice(v.id, "sale_price");
+                                    }
+                                  }}
+                                  autoFocus
+                                />
+                                <button
+                                  onClick={() => {
+                                    const value = priceValues[salePriceKey] !== undefined ? priceValues[salePriceKey] : v.sale_price;
+                                    if (value && value !== "") {
+                                      handlePriceUpdate(v.id, "sale_price", value);
+                                    }
+                                  }}
+                                  disabled={salePriceLoading || !priceValues[salePriceKey] || priceValues[  salePriceKey] === ""}
+                                  className="p-1 text-green-600 hover:text-green-700 disabled:opacity-50"
+                                  title="Save"
+                                >
+                                  <Check className="h-4 w-4 cursor-pointer" />
+                                </button>
+                                <button
+                                  onClick={() => cancelEditingPrice(v.id, "sale_price")}
+                                  disabled={salePriceLoading}
+                                  className="p-1 text-red-600 hover:text-red-700 disabled:opacity-50"
+                                  title="Cancel"
+                                >
+                                  <X className="h-4 w-4 cursor-pointer" />
+                                </button>
+                              </div>
+                            ) : (
+                              <div 
+                                className="flex items-center gap-1 cursor-pointer hover:bg-gray-100 rounded px-1 py-0.5 group"
+                                onClick={() => startEditingPrice(v.id, "sale_price", v.sale_price)}
+                                title="Click to edit"
+                              >
+                                <span>AED{v.sale_price}</span>
+                                <PencilIcon className="h-3 w-3 text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+                              </div>
+                            )}
+                          </td>
+                          
+                          <td className="px-3 py-2 border">AED{v.vendor_mrp}</td>
+                          <td className="px-3 py-2 border">AED{v.vendor_sale_price}</td>
+                          <td className="px-3 py-2 border font-semibold">
+                            <span className={parseFloat(percentageDiff) >= 0 ? "text-green-600" : "text-red-600"}>
+                              {percentageDiff}%
+                            </span>
+                          </td>
+                          <td className="px-3 py-2 border">{v.variant_color || "N/A"}</td>
+                          <td className="px-3 py-2 border">{v.variant_size || "N/A"}</td>
+                          <td className="px-3 py-2 border">{v.stock}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      <MapProductCategoryDialog
+        open={isMappingDialogOpen}
+        onClose={() => setIsMappingDialogOpen(false)}
+        productId={productId}
+        productName={product?.name}
+        initialCategoryId={product?.categories?.[0]?.id}
+        onSuccess={() => {
+          fetchProduct();
+        }}
+      />
+    </div>
+  );
+};
+
+export default ViewProduct;
+
