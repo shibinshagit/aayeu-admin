@@ -10,8 +10,8 @@ import { useAuthUser } from "@/contexts/AuthContext";
 function MagicLogin() {
   const searchParams = useSearchParams();
   const token = searchParams.get("token") || null;
-  const {updateUser}=useAuthUser();
-  const router = useRouter();      
+  const { updateUser } = useAuthUser();
+  const router = useRouter();
 
   const { request, loading, error } = useAxios();
 
@@ -25,19 +25,19 @@ function MagicLogin() {
     if (error) {
       console.error("Magic login error:", error);
       toast.success(error || "Magic login failed");
-       router.push("/")
-     
+      router.push("/")
+
     }
-   else  if (data.status === 200) {
-        if(data?.data?.accessToken){
-          // token setting 
-          const { accessToken, ...rest } = data.data;
-          const prevAuth=JSON.parse(localStorage.getItem("authUser")) || {}
-          // updateUser(data.data);
-          updateUser({ isAuthenticated:prevAuth.isAuthenticated, token: accessToken,user:data.data });
-          localStorage.setItem("authUser", JSON.stringify({ isAuthenticated:prevAuth.isAuthenticated, token: accessToken,user:data.data }));
-      
-        }
+    else if (data.status === 200) {
+      if (data?.data?.accessToken) {
+        // token setting 
+        const { accessToken, ...rest } = data.data;
+        const prevAuth = JSON.parse(localStorage.getItem("authUser")) || {}
+        // updateUser(data.data);
+        updateUser({ isAuthenticated: prevAuth.isAuthenticated, token: accessToken, user: data.data });
+        localStorage.setItem("authUser", JSON.stringify({ isAuthenticated: prevAuth.isAuthenticated, token: accessToken, user: data.data }));
+
+      }
       toast.success(data.message || "Login successful!");
       router.push("/dashboard");
     } else {
@@ -46,8 +46,13 @@ function MagicLogin() {
     }
   };
 
+  const hasCalled = React.useRef(false);
+
   useEffect(() => {
-    handleMagicLogin();
+    if (!hasCalled.current) {
+      hasCalled.current = true;
+      handleMagicLogin();
+    }
   }, []);
 
   return (

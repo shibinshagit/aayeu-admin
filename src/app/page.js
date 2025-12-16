@@ -36,7 +36,7 @@ export default function Login() {
     try {
       const payload = {
         email: data.email,
-       
+        redirectUrl: window.location.origin,
       };
 
       const { data: responseData, error } = await loginRequest({
